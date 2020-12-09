@@ -109,4 +109,23 @@ describe("[]", function()
          s:upper()
       ]])
    end)
+   describe("on tuples", function()
+      it("results in the correct type for integer literals", util.check [[
+         local t: {string, number} = {"hi", 1}
+         local str: string = t[1]
+         local num: number = t[2]
+      ]])
+      it("produces a union when indexed with a number variable", util.check [[
+         local t: {string, number} = {"hi", 1}
+         local x: number = 1
+         local var: string | number = t[x]
+      ]])
+      it("errors when a union can't be produced from indexing", util.check_type_error([[
+         local t: {{string}, {number}} = {{"hey"}, {1}}
+         local x: number = 1
+         local var = t[x]
+      ]], {
+         { msg = "cannot index this tuple with a variable because it would produce a union type that cannot be discriminated at runtime" },
+      }))
+   end)
 end)

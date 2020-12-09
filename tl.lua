@@ -1,4 +1,5 @@
-local _tl_compat53 = ((tonumber((_VERSION or ''):match('[%d.]*$')) or 0) < 5.3) and require('compat53.module'); local assert = _tl_compat53 and _tl_compat53.assert or assert; local io = _tl_compat53 and _tl_compat53.io or io; local ipairs = _tl_compat53 and _tl_compat53.ipairs or ipairs; local load = _tl_compat53 and _tl_compat53.load or load; local math = _tl_compat53 and _tl_compat53.math or math; local os = _tl_compat53 and _tl_compat53.os or os; local package = _tl_compat53 and _tl_compat53.package or package; local pairs = _tl_compat53 and _tl_compat53.pairs or pairs; local string = _tl_compat53 and _tl_compat53.string or string; local table = _tl_compat53 and _tl_compat53.table or table; local _tl_table_unpack = unpack or table.unpack; local TypeCheckOptions = {}
+local _tl_compat53 = ((tonumber((_VERSION or ''):match('[%d.]*$')) or 0) < 5.3) and require('compat53.module'); local assert = _tl_compat53 and _tl_compat53.assert or assert; local io = _tl_compat53 and _tl_compat53.io or io; local ipairs = _tl_compat53 and _tl_compat53.ipairs or ipairs; local load = _tl_compat53 and _tl_compat53.load or load; local math = _tl_compat53 and _tl_compat53.math or math; local os = _tl_compat53 and _tl_compat53.os or os; local package = _tl_compat53 and _tl_compat53.package or package; local pairs = _tl_compat53 and _tl_compat53.pairs or pairs; local string = _tl_compat53 and _tl_compat53.string or string; local table = _tl_compat53 and _tl_compat53.table or table; local _tl_table_unpack = unpack or table.unpack
+local TypeCheckOptions = {}
 
 
 
@@ -742,6 +743,7 @@ local TypeName = {}
 
 
 
+
 local table_types = {
    ["array"] = true,
    ["map"] = true,
@@ -751,6 +753,8 @@ local table_types = {
 }
 
 local Type = {}
+
+
 
 
 
@@ -963,6 +967,9 @@ local Node = {}
 
 
 
+
+
+
 local function is_array_type(t)
    return t.typename == "array" or t.typename == "arrayrecord"
 end
@@ -994,7 +1001,6 @@ local parse_argument_list
 local parse_argument_type_list
 local parse_type
 local parse_newtype
-
 
 local function fail(ps, i, msg)
    if not ps.tokens[i] then
@@ -1263,6 +1269,19 @@ local function parse_base_type(ps, i)
       if ps.tokens[i].tk == "}" then
          decl.elements = t
          decl.yend = ps.tokens[i].y
+         i = verify_tk(ps, i, "}")
+      elseif ps.tokens[i].tk == "," then
+         decl.typename = "tupletable"
+         decl.types = { t }
+         local n = 2
+         repeat
+            i = i + 1
+            i, decl.types[n] = parse_type(ps, i)
+            if not decl.types[n] then
+               break
+            end
+            n = n + 1
+         until ps.tokens[i].tk ~= ","
          i = verify_tk(ps, i, "}")
       elseif ps.tokens[i].tk == ":" then
          decl.typename = "map"
@@ -2578,6 +2597,16 @@ local fast_pretty_print_ast_opts = {
    preserve_newlines = true,
 }
 
+local primitive = {
+   ["function"] = "function",
+   ["enum"] = "string",
+   ["boolean"] = "boolean",
+   ["string"] = "string",
+   ["nil"] = "nil",
+   ["number"] = "number",
+   ["thread"] = "thread",
+}
+
 function tl.pretty_print_ast(ast, mode)
    local indent = 0
 
@@ -3074,16 +3103,6 @@ function tl.pretty_print_ast(ast, mode)
       },
    }
 
-   local primitive = {
-      ["function"] = "function",
-      ["enum"] = "string",
-      ["boolean"] = "boolean",
-      ["string"] = "string",
-      ["nil"] = "nil",
-      ["number"] = "number",
-      ["thread"] = "thread",
-   }
-
    local visit_type = {}
    visit_type.cbs = {
       ["string"] = {
@@ -3101,6 +3120,7 @@ function tl.pretty_print_ast(ast, mode)
    visit_type.cbs["thread"] = visit_type.cbs["string"]
    visit_type.cbs["array"] = visit_type.cbs["string"]
    visit_type.cbs["map"] = visit_type.cbs["string"]
+   visit_type.cbs["tupletable"] = visit_type.cbs["string"]
    visit_type.cbs["arrayrecord"] = visit_type.cbs["string"]
    visit_type.cbs["record"] = visit_type.cbs["string"]
    visit_type.cbs["enum"] = visit_type.cbs["string"]
@@ -3149,7 +3169,6 @@ end
 
 local ANY = a_type({ typename = "any" })
 local NONE = a_type({ typename = "none" })
-
 local NIL = a_type({ typename = "nil" })
 local NUMBER = a_type({ typename = "number" })
 local STRING = a_type({ typename = "string" })
@@ -3298,11 +3317,7 @@ local unop_types = {
 
 local binop_types = {
    ["+"] = numeric_binop,
-   ["-"] = {
-      ["number"] = {
-         ["number"] = NUMBER,
-      },
-   },
+   ["-"] = numeric_binop,
    ["*"] = numeric_binop,
    ["%"] = numeric_binop,
    ["/"] = numeric_binop,
@@ -3413,6 +3428,12 @@ local function show_type_base(t, seen)
          table.insert(out, show(v))
       end
       return "(" .. table.concat(out, ", ") .. ")"
+   elseif t.typename == "tupletable" then
+      local out = {}
+      for i, v in ipairs(t.types) do
+         table.insert(out, tostring(i) .. ": " .. show(v))
+      end
+      return "{" .. table.concat(out, ", ") .. "}"
    elseif t.typename == "poly" then
       local out = {}
       for _, v in ipairs(t.types) do
@@ -4539,6 +4560,15 @@ tl.type_check = function(ast, opts)
       end
       if t1.typename == "array" then
          return same_type(t1.elements, t2.elements)
+      elseif t1.typename == "tupletable" then
+         local all_errs = {}
+         for i = 1, math.min(#t1.types, #t2.types) do
+            local ok, err = same_type(t1.types[i], t2.types[i])
+            if not ok then
+               add_errs_prefixing(err, all_errs, "values", t1)
+            end
+         end
+         return any_errors(all_errs)
       elseif t1.typename == "map" then
          local all_errs = {}
          local k_ok, k_errs = same_type(t1.keys, t2.keys)
@@ -4589,9 +4619,13 @@ tl.type_check = function(ast, opts)
       return true
    end
 
+   local is_known_table_type
+
    local function a_union(types)
       local ts = {}
       local stack = {}
+
+      local primitives_seen = {}
       local i = 1
       while types[i] or stack[1] do
          local t
@@ -4606,7 +4640,14 @@ tl.type_check = function(ast, opts)
                table.insert(stack, s)
             end
          else
-            table.insert(ts, t)
+            if primitive[t.typename] then
+               if not primitives_seen[t.typename] then
+                  primitives_seen[t.typename] = true
+                  table.insert(ts, t)
+               end
+            else
+               table.insert(ts, t)
+            end
          end
       end
       return a_type({
@@ -4639,8 +4680,77 @@ tl.type_check = function(ast, opts)
 
    local resolve_unary = nil
 
-   local function is_known_table_type(t)
-      return (t.typename == "array" or t.typename == "map" or t.typename == "record" or t.typename == "arrayrecord")
+   local table_types = {
+      array = true,
+      map = true,
+      record = true,
+      arrayrecord = true,
+      tupletable = true,
+   }
+   is_known_table_type = function(t)
+      return table_types[t.typename]
+   end
+
+   local function resolve_union(typ)
+      assert(typ.typename == "union")
+   end
+
+   local function is_valid_union(typ)
+
+
+      local n_table_types = 0
+      local n_function_types = 0
+      local n_string_enum = 0
+      local has_primitive_string_type = false
+      for _, t in ipairs(typ.types) do
+         t = resolve_unary(t)
+         if table_types[t.typename] then
+            n_table_types = n_table_types + 1
+            if n_table_types > 1 then
+               return false, "cannot discriminate a union between multiple table types: %s"
+            end
+         elseif t.typename == "function" then
+            n_function_types = n_function_types + 1
+            if n_function_types > 1 then
+               return false, "cannot discriminate a union between multiple function types: %s"
+            end
+         elseif t.typename == "enum" or (t.typename == "string" and not has_primitive_string_type) then
+            n_string_enum = n_string_enum + 1
+            if n_string_enum > 1 then
+               return false, "cannot discriminate a union between multiple string/enum types: %s"
+            end
+            if t.typename == "string" then
+               has_primitive_string_type = true
+            end
+         end
+      end
+      return true
+   end
+
+   local expand_type
+   local function arraytype_from_tuple(where, tupletype)
+
+      local element_type = a_union(tupletype.types)
+      local valid, err = is_valid_union(element_type)
+      if valid then
+         return a_type({
+            elements = element_type,
+            typename = "array",
+         })
+      end
+
+
+      local arr_type = a_type({
+         elements = tupletype.types[1],
+         typename = "array",
+      })
+      for i = 2, #tupletype.types do
+         arr_type = expand_type(where, arr_type, a_type({ elements = tupletype.types[i], typename = "array" }))
+         if not arr_type or not arr_type.elements then
+            return nil, terr(tupletype, "unable to convert tuple %s to array", tupletype)
+         end
+      end
+      return arr_type
    end
 
    is_a = function(t1, t2, for_equality)
@@ -4743,6 +4853,18 @@ tl.type_check = function(ast, opts)
             if is_a(t1.elements, t2.elements) then
                return true
             end
+         elseif t1.typename == "tupletable" then
+            if t2.inferred_len and t2.inferred_len > #t1.types then
+               return false, terr(t1, "incompatible length, expected maximum length of " .. tostring(#t1.types) .. ", got " .. tostring(t2.inferred_len))
+            end
+            local u, err = arraytype_from_tuple(t1.inferred_at, t1)
+            if not u then
+               return false, err
+            end
+            if not is_a(u, t2) then
+               return false, terr(t2, "got %s (from %s), expected %s", u, t1, t2)
+            end
+            return true
          elseif t1.typename == "map" then
             local _, errs_keys = is_a(t1.keys, NUMBER)
             local _, errs_values = is_a(t1.values, t2.elements)
@@ -4773,9 +4895,19 @@ tl.type_check = function(ast, opts)
                errs_values = {}
             end
             return combine_errs(errs_keys, errs_values)
-         elseif t1.typename == "array" then
+         elseif t1.typename == "array" or t1.typename == "tupletable" then
+            local elements
+            if t1.typename == "tupletable" then
+               local arr_type = arraytype_from_tuple(t1.inferred_at, t1)
+               if not arr_type then
+                  return false, terr(t1, "Unable to convert tuple %s to map", t1)
+               end
+               elements = arr_type.elements
+            else
+               elements = t1.elements
+            end
             local _, errs_keys = is_a(NUMBER, t2.keys)
-            local _, errs_values = is_a(t1.elements, t2.values)
+            local _, errs_values = is_a(elements, t2.values)
             return combine_errs(errs_keys, errs_values)
          elseif is_record_type(t1) then
             if not is_a(t2.keys, STRING) then
@@ -4789,6 +4921,31 @@ tl.type_check = function(ast, opts)
                end
             end
             return match_fields_to_map(t1, t2)
+         end
+      elseif t2.typename == "tupletable" then
+         if t1.typename == "tupletable" then
+            for i = 1, math.min(#t1.types, #t2.types) do
+               if not is_a(t1.types[i], t2.types[i], for_equality) then
+                  return false, terr(t1, "in tuple entry " .. tostring(i) .. ": got %s, expected %s", t1.types[i], t2.types[i])
+               end
+            end
+            if for_equality and #t1.types ~= #t2.types then
+               return false, terr(t1, "tuples are not the same size")
+            end
+            if #t1.types > #t2.types then
+               return false, terr(t1, "tuple %s is too big for tuple %s", t1, t2)
+            end
+            return true
+         elseif is_array_type(t1) then
+            if t1.inferred_len and t1.inferred_len > #t2.types then
+               return false, terr(t1, "incompatible length, expected maximum length of " .. tostring(#t2.types) .. ", got " .. tostring(t1.inferred_len))
+            end
+            for i = 1, math.min(#t2.types, t1.inferred_len or math.huge) do
+               if not is_a(t2.types[i], t1.elements, for_equality) then
+                  return false, terr(t1, "tuple entry " .. tostring(i) .. " %s does not match array of %s", t2.types[i], t1.elements)
+               end
+            end
+            return true
          end
       elseif t1.typename == "function" and t2.typename == "function" then
          local all_errs = {}
@@ -5393,7 +5550,24 @@ tl.type_check = function(ast, opts)
       a = resolve_unary(a)
       b = resolve_unary(b)
 
-      if is_array_type(a) and is_a(b, NUMBER) then
+      if a.typename == "tupletable" and is_a(b, NUMBER) then
+         if idxnode.constnum then
+            if idxnode.constnum > #a.types or
+               idxnode.constnum < 1 or
+               idxnode.constnum ~= math.floor(idxnode.constnum) then
+
+               return node_error(idxnode, "index " .. tostring(idxnode.constnum) .. " out of range for tuple %s", a)
+            end
+            return a.types[idxnode.constnum]
+         else
+            local array_type = arraytype_from_tuple(idxnode, a)
+            if not array_type then
+               type_error(a, "cannot index this tuple with a variable because it would produce a union type that cannot be discriminated at runtime")
+               return UNKNOWN
+            end
+            return array_type.elements
+         end
+      elseif is_array_type(a) and is_a(b, NUMBER) then
          return a.elements
       elseif a.typename == "emptytable" then
          if a.keys == nil then
@@ -5438,7 +5612,7 @@ tl.type_check = function(ast, opts)
       end
    end
 
-   local function expand_type(where, old, new)
+   expand_type = function(where, old, new)
       if not old or old.typename == "nil" then
          return new
       else
@@ -5879,6 +6053,7 @@ tl.type_check = function(ast, opts)
                   t.declared_at = node
                   t.assigned_to = var.tk
                end
+               t.inferred_len = nil
                assert(var)
                add_var(var, var.tk, t, var.is_const)
 
@@ -5921,6 +6096,7 @@ tl.type_check = function(ast, opts)
                      t.declared_at = node
                      t.assigned_to = var.tk
                   end
+                  t.inferred_len = nil
                   add_global(var, var.tk, t, var.is_const)
 
                   dismiss_unresolved(var.tk)
@@ -6079,9 +6255,16 @@ tl.type_check = function(ast, opts)
                      if not (lax and is_unknown(t)) then
                         node_error(exp1, "attempting pairs loop on something that's not a map or record: %s", exp1.e2.type)
                      end
-                  elseif exp1.e1.tk == "ipairs" and not is_array_type(t) then
-                     if not (lax and (is_unknown(t) or t.typename == "emptytable")) then
-                        node_error(exp1, "attempting ipairs loop on something that's not an array: %s", exp1.e2.type)
+                  elseif exp1.e1.tk == "ipairs" then
+                     if t.typename == "tupletable" then
+                        local arr_type = arraytype_from_tuple(exp1.e2, t)
+                        if not arr_type then
+                           node_error(exp1, "attempting ipairs loop on tuple that's not a valid array: %s", exp1.e2.type)
+                        end
+                     elseif not is_array_type(t) then
+                        if not (lax and (is_unknown(t) or t.typename == "emptytable")) then
+                           node_error(exp1, "attempting ipairs loop on something that's not an array: %s", exp1.e2.type)
+                        end
                      end
                   end
                end
@@ -6178,9 +6361,21 @@ tl.type_check = function(ast, opts)
                x = node.x,
                typename = "emptytable",
             })
+
+            local function is_positive_int(n)
+               return n and n >= 1 and math.floor(n) == n
+            end
+
             local is_record = false
             local is_array = false
             local is_map = false
+
+            local is_tuple = false
+            local is_not_tuple = false
+
+            local last_array_idx = 1
+            local largest_array_idx = -1
+
             for i, child in ipairs(children) do
                assert(child.typename == "table_item")
                if child.kname then
@@ -6193,16 +6388,49 @@ tl.type_check = function(ast, opts)
                   table.insert(node.type.field_order, child.kname)
                elseif child.ktype.typename == "number" then
                   is_array = true
-                  if i == #children and node[i].key_parsed == "implicit" and child.vtype.typename == "tuple" then
+                  if not is_not_tuple then
+                     is_tuple = true
+                  end
+                  if not node.type.types then
+                     node.type.types = {}
+                  end
 
-                     for _, c in ipairs(child.vtype) do
-                        node.type.elements = expand_type(node, node.type.elements, c)
+                  if node[i].key_parsed == "implicit" then
+                     if i == #children and child.vtype.typename == "tuple" then
+
+                        for j, c in ipairs(child.vtype) do
+                           node.type.elements = expand_type(node, node.type.elements, c)
+                           node.type.types[last_array_idx] = resolve_tuple(c)
+                           last_array_idx = last_array_idx + 1
+                        end
+                     else
+                        node.type.types[last_array_idx] = resolve_tuple(child.vtype)
+                        last_array_idx = last_array_idx + 1
+                        node.type.elements = expand_type(node, node.type.elements, child.vtype)
                      end
                   else
-                     node.type.elements = expand_type(node, node.type.elements, child.vtype)
+                     local n = node[i].key.constnum
+
+                     if not is_positive_int(n) then
+                        node.type.elements = expand_type(node, node.type.elements, child.vtype)
+                        is_not_tuple = true
+                     elseif n then
+
+
+
+
+                        node.type.types[n] = resolve_tuple(child.vtype)
+                        if n > largest_array_idx then
+                           largest_array_idx = n
+                        end
+                        node.type.elements = expand_type(node, node.type.elements, child.vtype)
+                     end
+                  end
+
+                  if last_array_idx > largest_array_idx then
+                     largest_array_idx = last_array_idx
                   end
                   if not node.type.elements then
-                     node_error(node, "cannot determine type of array elements")
                      is_array = false
                   end
                else
@@ -6227,11 +6455,39 @@ tl.type_check = function(ast, opts)
                   node_error(node, "cannot determine type of table literal")
                end
             elseif is_array then
-               node.type.typename = "array"
+               if is_not_tuple then
+                  node.type.typename = "array"
+                  node.type.inferred_len = largest_array_idx - 1
+               else
+                  local pure_array = true
+
+                  local last_t
+                  for _, current_t in pairs(node.type.types) do
+                     if last_t then
+                        if not same_type(last_t, current_t) then
+                           pure_array = false
+                           break
+                        end
+                     end
+                     last_t = current_t
+                  end
+
+                  if not pure_array then
+                     node.type.typename = "tupletable"
+                  else
+                     node.type.typename = "array"
+                     node.type.inferred_len = largest_array_idx - 1
+                  end
+               end
             elseif is_record then
                node.type.typename = "record"
             elseif is_map then
                node.type.typename = "map"
+            elseif is_tuple then
+               node.type.typename = "tupletable"
+               if not node.type.types or #node.type.types == 0 then
+                  node_error(node, "cannot determine type of tuple elements")
+               end
             end
          end,
       },
@@ -6650,32 +6906,9 @@ tl.type_check = function(ast, opts)
          },
          ["union"] = {
             after = function(typ, children)
-
-
-               local n_table_types = 0
-               local n_function_types = 0
-               local n_string_enum = 0
-               for _, t in ipairs(typ.types) do
-                  t = resolve_unary(t)
-                  if table_types[t.typename] then
-                     n_table_types = n_table_types + 1
-                     if n_table_types > 1 then
-                        type_error(typ, "cannot discriminate a union between multiple table types: %s", typ)
-                        break
-                     end
-                  elseif t.typename == "function" then
-                     n_function_types = n_function_types + 1
-                     if n_function_types > 1 then
-                        type_error(typ, "cannot discriminate a union between multiple function types: %s", typ)
-                        break
-                     end
-                  elseif t.typename == "string" or t.typename == "enum" then
-                     n_string_enum = n_string_enum + 1
-                     if n_string_enum > 1 then
-                        type_error(typ, "cannot discriminate a union between multiple string/enum types: %s", typ)
-                        break
-                     end
-                  end
+               local valid, err = is_valid_union(typ)
+               if not valid then
+                  type_error(typ, err, typ)
                end
                return typ
             end,
@@ -6690,6 +6923,7 @@ tl.type_check = function(ast, opts)
       },
    }
 
+   visit_type.cbs["tupletable"] = visit_type.cbs["string"]
    visit_type.cbs["typetype"] = visit_type.cbs["string"]
    visit_type.cbs["nestedtype"] = visit_type.cbs["string"]
    visit_type.cbs["typevar"] = visit_type.cbs["string"]
